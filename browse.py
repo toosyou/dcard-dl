@@ -96,7 +96,10 @@ def get_password(soup):
     for i in soup.select('div[class*=Post_content] > div > div > div'):
         # post content without '-'
         passwd_set.add(i.text.strip().replace('-', ''))
-
+    try:
+        passwd_set.remove('')  # prevent empty passwd
+    except:  # if already nice
+        pass
     return passwd_set
 
 
