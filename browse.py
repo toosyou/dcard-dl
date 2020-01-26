@@ -1,16 +1,88 @@
+import os
 import re
+import queue
+import pathlib
 import requests
 import argparse
-from itertools import combinations as cmb
+import threading
 from bs4 import BeautifulSoup as bs
 
+import deepcard
+import progress_bar
+
 sess = requests.Session()
-folder = './beta_1/'
+folder = './multi_today/'
+worker_num = 4
+lock = threading.Lock()
 
+class Worker(threading.Thread):
+    pb = progress_bar.Progress_Bar()
 
-def ui(customize_string):
-    print(f'Try to {customize_string}...')
+    def __init__(self, queue, lock):
+        threading.Thread.__init__(self)
+        self.queue = queue
+        self.lock = lock
+        self.total = self.queue.qsize()
+        self.total_links = 0
+        self.success_links = 0
 
+    def run(self):
+        while self.queue.qsize() > 0:
+            with open(folder + 'dl.log', 'a') as log:
+                link = self.queue.get()
+                url = 'https://www.dcard.tw/f/sex/p/' + link
+                try:
+                    html = get_html(url)
+                except:
+                    print(f"Exception: URL {url} Unreachable.")
+                    continue
+                # logging
+                log.write(url + '\n')
+                # parsing
+                soup = bs(html, 'html.parser')
+                pptcc_links = get_pptcc_links(soup)
+                passwd_set = get_password(soup)
+                priotiry_passwd = set()
+                self.total_links += len(pptcc_links)
+
+                for pptcc_url in pptcc_links:
+                    try:
+                        ret, content_type = download_process(
+                            pptcc_url, priotiry_passwd, passwd_set)  # dl
+                    except Exception as e:
+                        self.lock.acquire()
+                        print(e)
+                        log.write(
+                            u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}\n")
+                        pb.bar_with_info(u"[Unknown][\u001b[31mFailed\u001b[0m] " +
+                                         f"{pptcc_url}")
+                        self.lock.release()
+                    
+                    if ret:
+                        # logging
+                        self.success_links += 1
+                        self.lock.acquire()
+                        log.write(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m]" +
+                                  f"{pptcc_url} {ret}\n")
+                        pb.bar_with_info(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m] " +
+                                         f"{pptcc_url} {ret}")
+                        # optimize
+                        priotiry_passwd.add(ret)
+                        self.lock.release()
+                    else:
+                        # logging
+                        self.lock.acquire()
+                        log.write(
+                            u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}\n")
+                        pb.bar_with_info(u"[Unknown][\u001b[31mFailed\u001b[0m] " +
+                                         f"{pptcc_url}")
+                        self.lock.release()
+            self.lock.acquire()
+            pb.bar((self.total - self.queue.qsize())/self.total)
+            self.lock.release()
+
+def create_folder(folder):
+    pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
 
 def to_dict(string):
     string = string.strip()
@@ -22,6 +94,10 @@ def to_dict(string):
             ret_dict[line[0]] = line[1]
     return ret_dict
 
+pb = Worker.pb
+
+def ui(customize_string):
+    pb.bar_with_info(f'Try to {customize_string}...')
 
 def get_html(url):
     """
@@ -46,8 +122,20 @@ def get_pptcc_links(soup):
         links(set): ppt.cc links, str
     """
     ui(f'get_pptcc_links')
-    links = soup.find_all('a', href=re.compile('.*ppt\.cc.*'))
-    links = set(map(lambda a: a.text, links))
+    # links = soup.find_all('a', href=re.compile('.*ppt\.cc.*'))
+    links = set()
+    post_content_links = soup.select('div[class*=Post_content] > div > div > div > div > a')
+    for a in post_content_links:
+        if 'ppt.cc' in a.text:
+            links.add(a.text)
+    post_authors = soup.select('span[class*=PostAuthor_root]')
+    for post_author in post_authors:
+        if post_author.text == '原PO':
+            for parent in post_author.parents:
+                if parent.name == 'header':
+                    tmp = parent.parent.find_all('a', href=re.compile('.*ppt\.cc.*'))
+                    if tmp:
+                        links.add(tmp[0].text)
     return links
 
 
@@ -59,32 +147,35 @@ def search_reply(soup):
         if '原PO' in author.text:
             tmp = author.find_parent('div', class_='CommentEntry_entry_3SaSrr').find(
                 'div', class_='CommentEntry_content_1ATrw1').select('div > div > div')
-            for i in tmp:
-                if 'https' not in i.text:
-                    passwd_set.add(i.text.strip().replace(
-                        '-', ''))  # replace all '-'
-
+            for block in tmp:
+                for i in block.getText().split():
+                    if 'https' not in i or not re.match('B[0-9]+', i): # delete href and B[0-9]+ replies
+                        candidate_passwd = re.sub('[-|#|＃|「|」|=|:|：|(Password)|(password)|密碼]', '', i.strip()).strip()
+                        passwd_set.add(candidate_passwd)  # replace all '-'
     return passwd_set
 
 
-"""
-- [v] Original Poster's replies(only rows)(replaced all '-' in search_reply)
-- [v] Dates
-- [v] Years
-- [v] Tags
-- [v] Post content
-"""
-
-
 def get_password(soup):
+    """
+    - [v] Original Poster's replies(only rows)(replaced all '-' in search_reply)
+    - [v] Dates (+3 date shift)
+    - [v] Years
+    - [v] Tags
+    - [v] Post content
+    - [v] delete B[0-9]+ replies
+    - [v] Hashtags
+    - [ ] Artificial
+    - [ ] Natural language password hint
+    """
     ui(f'get_password')
     passwd_set = search_reply(soup)  # replies
 
     date = re.findall('[0-9]*月[0-9]*日',
                       soup.select('span[class*=Post_date]')[0].text)[0]
     month, day = date[:-1].split('月')
-    date = "{:02}".format(int(month)) + "{:02}".format(int(day))
-    passwd_set.add(date)  # dates
+    for date_shift in range(4):  # brute force date shift
+        date = "{:02}".format(int(month)) + "{:02}".format(int(day)+date_shift)
+        passwd_set.add(date)  # dates
 
     YEARS = ['2020', '2019', '2018', '2017']
     for years in YEARS:
@@ -100,10 +191,14 @@ def get_password(soup):
         passwd_set.remove('')  # prevent empty passwd
     except:  # if already nice
         pass
+    try:
+        passwd_set = passwd_set.union({'0000', '1234', '4321'}) # artificial passwd
+    except:
+        pass
     return passwd_set
 
 
-def download_process(url, priority_passwd, passwd_set):
+def download_process(url, priority_passwd, passwd_set):  # download single pptcc resource(img or img+mov)
     """
     Return:
         passwd(str): nice passwd
@@ -161,68 +256,82 @@ def get_articles(url):
     for link in articles:
         result = re.findall('/f/sex/p/[0-9]+', link['href'])  # spend times !!!
         if len(result) == 1:
-            ret_links.add(result[0])
+            ret_links.add(result[0].replace('/f/sex/p/', ''))
     return ret_links
-
 
 def test_dl_all_img():
     ##  dcard site
-    # article_links = get_articles('https://www.dcard.tw/f/sex')
+    article_links = get_articles('https://www.dcard.tw/f/sex')
 
-    ##  dcard api
-    article_links = list(map(lambda a: str(a['id']), requests.Session().get(
-        'https://www.dcard.tw/_api/forums/sex/posts?popular=true&limit=30'
-    ).json()))
-    article_links.append('232936639')
-    article_links.append('232947487')
+    ##  dcard api (unable to brute force, will be blocked)
+    # article_links = list(map(lambda a: str(a['id']), requests.Session().get(
+    #     'https://www.dcard.tw/_api/forums/sex/posts?popular=true&limit=30'
+    # ).json()))
+    # article_links.append('232936639')
+    # article_links.append('232947487')
+
     ##  deepcard api
-    # article_links = set()
-    # for i in range(1, 32):
-
-    #     res.json()['data']['posts'][0]['id']
-
+    # article_links = deepcard.get_articles()
     ##
     total_links = 0
     success_links = 0
-    with open(folder + 'dl.log', 'w') as log:
+    mission_queue = queue.Queue()
+    workers = []
+    
+    with open(folder + 'dl.log', 'a') as log:
         for link in article_links:
-            url = 'https://www.dcard.tw/f/sex/p/' + link
-            try:
-                html = get_html(url)
-            except:
-                print(f"Exception: URL {url} Unreachable.")
-                continue
-            # logging
-            log.write(url + '\n')
-            # parsing
-            soup = bs(html, 'html.parser')
-            pptcc_links = get_pptcc_links(soup)
-            passwd_set = get_password(soup)
-            priotiry_passwd = set()
-            total_links += len(pptcc_links)
-            for pptcc_url in pptcc_links:
-                ret, content_type = download_process(
-                    pptcc_url, priotiry_passwd, passwd_set)
-                # print(ret, content_type)
-                if ret:
-                    # logging
-                    success_links += 1
-                    log.write(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m]" +
-                              f"{pptcc_url} {ret}\n")
-                    print(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m] " +
-                          f"{pptcc_url} {ret}")
-                    # optimize
-                    priotiry_passwd.add(ret)
-                else:
-                    # logging
-                    log.write(
-                        u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}\n")
-                    print(u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}")
-
+            mission_queue.put(link)
+        for i in range(worker_num):
+            workers.append(Worker(mission_queue, lock))
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join()
+            # url = 'https://www.dcard.tw/f/sex/p/' + link
+            # try:
+            #     html = get_html(url)
+            # except:
+            #     print(f"Exception: URL {url} Unreachable.")
+            #     continue
+            # # logging
+            # log.write(url + '\n')
+            # # parsing
+            # soup = bs(html, 'html.parser')
+            # pptcc_links = get_pptcc_links(soup)
+            # passwd_set = get_password(soup)
+            # priotiry_passwd = set()
+            # total_links += len(pptcc_links)
+            # for pptcc_url in pptcc_links:
+            #     try:
+            #         ret, content_type = download_process(pptcc_url, priotiry_passwd, passwd_set)  # dl
+            #     except Exception as e:
+            #         print(e)
+            #         log.write(u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}\n")
+            #         print(u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}")
+            #     if ret:
+            #         # logging
+            #         success_links += 1
+            #         log.write(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m]" +
+            #                   f"{pptcc_url} {ret}\n")
+            #         print(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m] " +
+            #               f"{pptcc_url} {ret}")
+            #         # optimize
+            #         priotiry_passwd.add(ret)
+            #     else:
+            #         # logging
+            #         log.write(
+            #             u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}\n")
+            #         print(u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{pptcc_url}")
+        for worker in workers:
+            total_links += worker.total_links
+            success_links += worker.success_links
+        
         print(f"Total links: {total_links}")
         print(f"Success links: {success_links}")
         print(f"Success rate: {success_links/total_links}")
 
 
 if __name__ == "__main__":
+    create_folder(folder)
     test_dl_all_img()
+    # test_pptcc_links()
