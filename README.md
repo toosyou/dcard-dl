@@ -1,12 +1,18 @@
 # dcard-dl
 
-This is a downloader for ppt.cc with password in Dcard.
+This is a downloader for ppt.cc resources with password in Dcard.
 
 ## Description
 
 It will automaticlly detect the password of those encrypted img/mov which have been uploaded to ppt.cc and download them for you!
 We've reached about 70% accuracy simpliy use rule based password detection.
 This project is still in development stage
+
+## Requirement
+```
+requests
+bs4
+```
 
 ## Usage
 
@@ -23,4 +29,4 @@ We provide three types of article sourse.
 * Deepcard API -- History hot posts
 
 If you're using Deepcard API for the article sourse, go to `deepcard.py` and
-manuily(:P) change the range of the history data.
+manually(:P) change the range of the history data.
