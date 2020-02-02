@@ -6,8 +6,9 @@ This is a downloader for ppt.cc & risu.io resources with password in Dcard.
 
 It will automaticlly detect the password of those encrypted img/mov which have been uploaded to **ppt.cc** or **risu.io** and download them for you!
 We've reached about 70% accuracy simpliy use rule based password detection.
-This project is still in development stage
-**ppt.cc is disable now due to the unstable server**
+This project is still in development stage.
+
+**WARNING: ppt.cc is disable now due to its unstable server**
 
 ## Requirement
 ```
