@@ -12,7 +12,7 @@ def dl(sess, folder, url, passwd, file_info):
         res = sess.get(file_path, verify=False, stream=True)
         for chunk in res:
             f.write(chunk)
-    print(file_path, file_type)
+    # print(file_path, file_type)
 
     return passwd, file_type
 
@@ -50,8 +50,9 @@ def get_risu_dl_link(folder: str, url: str, passwd: str) ->str:
                     return 'NOPASSWD', file_type
 
             result = soup.select('meta[name=csrf-token]')
-            csrf_token = result[0]['content']
-            headers['x-csrf-token'] = csrf_token
+            if result:
+                csrf_token = result[0]['content']
+                headers['x-csrf-token'] = csrf_token
             res = sess.post(url+'/confirm.json', headers = headers, data={'password': str(passwd)}, verify=False)
 
             if res.status_code == 200 and 'is_expired' in res.json():

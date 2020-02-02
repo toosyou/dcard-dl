@@ -16,11 +16,30 @@ import risu
 
 import datetime
 
-folder = './risu_01/'
-start_time = datetime.datetime(2020, 1, 1)
-end_time = datetime.datetime(2020, 2, 3)
+folder = './current_' + datetime.date.today().strftime('%Y_%m_%d')
+start_time = datetime.date(2019, 12, 1)
+end_time = datetime.date(2020, 1, 1)
 worker_num = 4
 lock = threading.Lock()
+
+parser = argparse.ArgumentParser()
+time_group = parser.add_mutually_exclusive_group()
+time_group.add_argument('-c', '--current', help='current Dcard site result', action='store_true', default=True)
+time_group.add_argument('-r', '--range', help='set range(use deepcard api) format: YYYY_MM_DD_YYYY_MM_DD')
+parser.add_argument('-f', '--folder', help='set folder path(will auto-generate it for u)')
+parser.add_argument('-t', '--thread', help='default = 4', type=int, default=4)
+args = parser.parse_args()
+folder = args.folder or folder
+folder = os.path.join('./', folder, '')
+if args.range:
+    time_range = list(map(int, args.range.split('_')))
+    start_time = datetime.date(*time_range[:3])
+    end_time   = datetime.date(*time_range[3:])
+    args.current = False
+worker_num = args.thread
+print(args)
+
+
 
 class Worker(threading.Thread):
     pb = progress_bar.Progress_Bar()
@@ -42,7 +61,7 @@ class Worker(threading.Thread):
                 try:
                     html = get_html(url)
                 except:
-                    print(f"Exception: URL {url} Unreachable.")
+                    ui(f"Exception: URL {url} Unreachable.")
                     continue
                 # logging
                 log.write(url + '\n')
@@ -322,7 +341,8 @@ def get_articles(url):
 
 def test_dl_all_img():
     ##  dcard site
-    # article_links = get_articles('https://www.dcard.tw/f/sex')
+    if args.current == True:
+        article_links = get_articles('https://www.dcard.tw/f/sex')
 
     ##  dcard api (unable to brute force, will be blocked)
     # article_links = list(map(lambda a: str(a['id']), requests.Session().get(
@@ -330,10 +350,12 @@ def test_dl_all_img():
     # ).json()))
 
     ##  deepcard api
-    article_links = deepcard.get_articles(start_time, end_time)
+    if args.range:
+        article_links = deepcard.get_articles(start_time, end_time)
     ##
     total_links = 0
     success_links = 0
+    expired_links = 0
     mission_queue = queue.Queue()
     workers = []
     
@@ -349,8 +371,10 @@ def test_dl_all_img():
         for worker in workers:
             total_links += worker.total_links
             success_links += worker.success_links
+            expired_links += worker.is_expired
         
         print(f"Total links: {total_links}")
+        print(f"Expired links: {expired_links}")
         print(f"Success links: {success_links}")
         print(f"Success rate: {success_links/total_links}")
 
@@ -412,8 +436,6 @@ def try_passwd(url, passwd):
                         return passwd, 'img'
         except ConnectionError as e:
             print(e)
-            # time.sleep(random.randint(1,3))
-            # try_passwd(url, passwd)
         except Exception as e:
             raise e
         return None, None
