@@ -46,7 +46,7 @@ def get_risu_dl_link(folder: str, url: str, passwd: str) ->str:
                 params = json.loads(next(app[0].children)[':params'])
                 if params['lock'] == False: # if no password needed
                     file_info = params['file_infos'][0]
-                    passwd, file_type = dl(sess, folder, url, passwd, file_info)
+                    passwd, file_type = dl(sess, folder, url, 'NOPASSWD', file_info)
                     return 'NOPASSWD', file_type
 
             result = soup.select('meta[name=csrf-token]')
