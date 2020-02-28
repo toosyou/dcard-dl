@@ -105,12 +105,12 @@ class Worker(threading.Thread):
                         except Exception as e:
                             self.lock.acquire()
                             print(e)
-                            raise e
                             log.write(
                                 u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{url} {short_url}\n")
                             pb.bar_with_info(u"[Unknown][\u001b[31mFailed\u001b[0m] " +
                                              f"{short_url}")
                             self.lock.release()
+                            raise e
 
                         if ret:
                             # logging
