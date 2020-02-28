@@ -54,6 +54,16 @@ class Worker(threading.Thread):
         self.is_expired = 0
 
     def run(self):
+        # Get services status
+        service_status = {
+            'ppt.cc': False,
+            'risu.io': False,
+        }
+        if requests.get('https://ppt.cc/').status_code == 200:
+            service_status['ppt.cc'] = True
+        if requests.get('https://risu.io/', verify=False).status_code == 200:
+            service_status['risu.io'] = True
+                
         while self.queue.qsize() > 0:
             with open(folder + 'dl.log', 'a') as log:
                 link = self.queue.get()
@@ -67,9 +77,15 @@ class Worker(threading.Thread):
                 log.write(url + '\n')
                 # parsing
                 soup = bs(html, 'html.parser')
-                # pptcc_links = get_pptcc_links(soup)
-                pptcc_links = set() # disable pptcc
-                risuio_links = get_risuio_links(soup)
+                
+                # add to search candidate if the service is available
+                pptcc_links  = set()
+                risuio_links = set()
+                if service_status['ppt.cc']:
+                    pptcc_links = get_pptcc_links(soup)
+                if service_status['risu.io']:                    
+                    risuio_links = get_risuio_links(soup)
+                
                 passwd_set = get_password(soup)
                 priority_passwd = set()
                 self.total_links += len(pptcc_links) + len(risuio_links)
@@ -84,7 +100,7 @@ class Worker(threading.Thread):
                                 )
                             if 'ppt.cc' in short_url:
                                 ret, content_type = pptcc_dl(
-                                    shorts_url, priority_passwd, passwd_set
+                                    short_url, priority_passwd, passwd_set
                                 )  # dl
                         except Exception as e:
                             self.lock.acquire()
@@ -341,13 +357,14 @@ def get_articles(url):
 
 def test_dl_all_img():
     ##  dcard site
-    if args.current == True:
-        article_links = get_articles('https://www.dcard.tw/f/sex')
+    # if args.current == True:
+    #     article_links = get_articles('https://www.dcard.tw/f/sex')
 
     ##  dcard api (unable to brute force, will be blocked)
-    # article_links = list(map(lambda a: str(a['id']), requests.Session().get(
-    #     'https://www.dcard.tw/_api/forums/sex/posts?popular=true&limit=30'
-    # ).json()))
+    if args.current == True:
+        article_links = list(map(lambda a: str(a['id']), requests.Session().get(
+            'https://www.dcard.tw/_api/forums/sex/posts?popular=true&limit=30'
+        ).json()))
 
     ##  deepcard api
     if args.range:
