@@ -31,14 +31,6 @@ class Dcard:
     """
     API_ROOT = 'https://www.dcard.tw/_api'
 
-    self.article_links = []
-    self.article_json = None
-    self.exist = False
-    self.article_json = None
-    self.text_by_host = None
-    self.short_links  = {}
-    self.passwd = set()
-
     def __init__(self, article_id, mode='pop'):
         """
         Description:
@@ -46,14 +38,11 @@ class Dcard:
         Args:
             mode(str): Using dcard API or deepcard api? Maybe should use enum type.
         """
-        if mode == 'pop':
-            self.article_links = self.get_pop() # This may need to parallelize
         res = requests.get(API_ROOT + '/posts/' + article_id)
 
+        self.exist = False
         if res.status_code == '200':
             self.exist = True
-        elif res.status_code == '404':
-            self.exist = False
         else:
             print(res.status_code)
 
