@@ -1,9 +1,14 @@
 import re
 import requests
 
+import os
 import time
 import random
+import datetime
+import queue
 import threading
+import argparse
+import pathlib
 
 import risu
 import deepcard
@@ -19,9 +24,11 @@ def get_pop(forums='sex'):
         article_links(list[str]): Pop posts' id.
     """ 
     return list(map(lambda a: str(a['id']), requests.get(
-        API_ROOT + '/forums/' + forums + '/posts?popular=true&limit=30'
+        Dcard.API_ROOT + '/forums/' + forums + '/posts?popular=true&limit=30'
     ).json()))
 
+def create_folder(folder):
+    pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
 
 class Dcard:
     """
@@ -38,17 +45,18 @@ class Dcard:
         Args:
             mode(str): Using dcard API or deepcard api? Maybe should use enum type.
         """
-        res = requests.get(API_ROOT + '/posts/' + article_id)
+        self.article_id = article_id
+        res = requests.get(Dcard.API_ROOT + '/posts/' + article_id)
 
         self.exist = False
-        if res.status_code == '200':
+        if res.status_code == 200:
             self.exist = True
         else:
             print(res.status_code)
 
         if self.exist:
             self.article_json = res.json()
-            article_content = self.article_json["content"].split()
+            article_content = set(self.article_json["content"].split())
             host_comments   = self.get_host_comments() # depends on commentCount
             self.text_by_host = article_content.union(host_comments)
             self.short_links = {
@@ -58,7 +66,7 @@ class Dcard:
             self.passwd = self.get_password()
 
 
-    def get_host_comments(self, article_id=self.article_id):
+    def get_host_comments(self):
         """
         Description:
             Get comments send by host.
@@ -70,20 +78,20 @@ class Dcard:
         comments = set()
 
         # Popular comments
-        res = requests.get(API_ROOT + '/posts/' + article_id + '/comments?popular=true')
+        res = requests.get(Dcard.API_ROOT + '/posts/' + self.article_id + '/comments?popular=true')
         # Post by host and available
         for res_json in res.json():
             if res_json['host'] == True and res_json['hidden'] == False:
-                comments = comments.union(set(res_json['comment'].split()))
+                comments = comments.union(set(res_json['content'].split()))
         
         # Regular comments
-        for count in range(0, self.article_json[article_id]["commentCount"], 30):
-            res = requests.get(API_ROOT + '/posts/' + article_id + '/comments?after='+str(count))
+        for count in range(0, self.article_json["commentCount"], 30):
+            res = requests.get(Dcard.API_ROOT + '/posts/' + self.article_id + '/comments?after='+str(count))
             for res_json in res.json():
                 if res_json['host'] == True and res_json['hidden'] == False:
-                    comments = comments.union(set(res_json['comment'].split()))
+                    comments = comments.union(set(res_json['content'].split()))
         
-        return comment
+        return comments
 
 
     def get_short_links(self, regex):
@@ -106,7 +114,7 @@ class Dcard:
         return links
 
 
-    def get_password():
+    def get_password(self):
         """
         - [v] Original Poster's replies(only rows)(replaced all '-' in search_reply)
         - [v] Dates (+3 date shift)
@@ -123,12 +131,12 @@ class Dcard:
         passwd_set = set()
         for text in self.text_by_host:
             if not out.match(text):
-                condidate_passwd = pattern.sub('', text)
+                candidate_passwd = pattern.sub('', text)
                 passwd_set.add(candidate_passwd)
         
-        year, month, day = self.article_json['createAt'].split('T')[0].split('-')
-        for date_shift in range(4): # Maybe try createAt -> updateAt
-            date = (datetime.date(year, int(month), int(day))+datetime.timedelta(days=date_shift)).strftime('%m%d')
+        year, month, day = self.article_json['createdAt'].split('T')[0].split('-')
+        for date_shift in range(4): # Maybe try createdAt -> updatedAt
+            date = (datetime.date(int(year), int(month), int(day))+datetime.timedelta(days=date_shift)).strftime('%m%d')
             passwd_set.add(date)
         
         passwd_set = passwd_set.union(set(self.article_json['tags']))
@@ -146,7 +154,7 @@ class Worker(threading.Thread):
 
     pb = progress_bar.Progress_Bar()
 
-    def __init__(self, queue, lock):
+    def __init__(self, folder, queue, lock):
         threading.Thread.__init__(self)
         self.queue = queue
         self.lock = lock
@@ -154,6 +162,7 @@ class Worker(threading.Thread):
         self.total_links = 1 # prevent divide by zero error
         self.success_links = 0
         self.is_expired = 0
+        self.folder = folder
 
     def run(self):
         # Get services status
@@ -167,7 +176,9 @@ class Worker(threading.Thread):
             service_status['risu.io'] = True
         
         while self.queue.qsize() > 0:
-            with open(folder + 'this_dl.log', 'a') as log:
+            with open(self.folder + 'this_dl.log', 'a') as log:
+                # Be kind to dcard'api
+                time.sleep(random.random())
                 # Accept job from queue
                 article_id = self.queue.get()
                 # Create Dcard object
@@ -184,7 +195,7 @@ class Worker(threading.Thread):
                         try:
                             if service == 'risu.io':
                                 ret, content_type = risu.risuio_dl(
-                                    folder, short_url, priority_passwd, passwd_set 
+                                    self.folder, url, priority_passwd, dcard.passwd 
                                 )
                             # if service == 'ppt.cc':
                             #     ret, content_type = pptcc_dl(
@@ -195,7 +206,7 @@ class Worker(threading.Thread):
                             print(e)
                             log.write(
                                 u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{url} {short_url}\n")
-                            pb.bar_with_info(u"[Unknown][\u001b[31mFailed\u001b[0m] " +
+                            Worker.pb.bar_with_info(u"[Unknown][\u001b[31mFailed\u001b[0m] " +
                                                 f"{short_url}")
                             self.lock.release()
                             raise e
@@ -206,7 +217,7 @@ class Worker(threading.Thread):
                             self.lock.acquire()
                             log.write(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m]" +
                                         f"{url} {short_url} {ret}\n")
-                            pb.bar_with_info(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m] " +
+                            Worker.pb.bar_with_info(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m] " +
                                                 f"{short_url} {ret}")
                             # optimize
                             priority_passwd.add(ret)
@@ -222,7 +233,7 @@ class Worker(threading.Thread):
                                 u"[\u001b[31mFailed\u001b[0m] " + 
                                 f"{url} {short_url}\n"
                             )
-                            pb.bar_with_info(
+                            Worker.pb.bar_with_info(
                                 f"[{content_type if content_type else 'Unknown'}]" +
                                 u"[\u001b[31mFailed\u001b[0m] " +
                                 f"{short_url}"
@@ -247,6 +258,9 @@ if __name__ == "__main__":
     args = parser.parse_args()
     folder = args.folder or folder
     folder = os.path.join('./', folder, '')
+    # Create folder
+    create_folder(folder)
+
     if args.range:
         time_range = list(map(int, args.range.split('_')))
         start_time = datetime.date(*time_range[:3])
@@ -270,7 +284,7 @@ if __name__ == "__main__":
         for link in article_links:
             mission_queue.put(link)
         for i in range(worker_num):
-            workers.append(Worker(mission_queue, lock))
+            workers.append(Worker(folder, mission_queue, lock))
         for worker in workers:
             worker.start()
         for worker in workers:
