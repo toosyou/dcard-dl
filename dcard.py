@@ -57,7 +57,7 @@ class Dcard:
         Args:
             article_id(str): Just id -3-.
         Return:
-            content(list[str]): Comments' content, split by spaces etc.
+            content(set[str]): Comments' content, split by spaces etc.
         """
         comments = set()
 
@@ -69,14 +69,22 @@ class Dcard:
                 comments.union(set(res_json['comment'].split()))
         
         # Regular comments
-
-        res = requests.get(API_ROOT + '/posts/' + article_id + '/comments?after')
+        for count in range(0, self.article_json[article_id]["commentCount"], 30):
+            res = requests.get(API_ROOT + '/posts/' + article_id + '/comments?after='+str(count))
+            for res_json in res.json():
+                if res_json['host'] == True and res_json['hidden'] == False:
+                    comments.union(set(res_json['comment'].split()))
+        
+        return comment
 
     def get_short_links(self, content, regex):
         # res = requests.get(API_ROOT + '/posts/' + )
         """
         Description:
             Parse short links in content(depends on regex).
+            Example of regex:
+                re.compile('.*ppt\.cc.*')
+                re.compile('.*risu\.io/[a-zA-Z]+')
         Args:
             content(list[str]): Each element contains single line of the whole content.
         Return:
