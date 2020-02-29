@@ -4,11 +4,11 @@ import requests
 from bs4 import BeautifulSoup as bs
 
 
-def dl(sess, folder, url, passwd, file_info):
+def dl(sess, folder, url, passwd, filename_postfix, file_info):
     file_path = file_info['file_path']
     file_type = file_info['content_type']
     
-    with open(folder+url.split('/')[-1]+'_'+passwd+'.'+file_type.split('/')[-1], 'wb') as f:
+    with open(folder+url.split('/')[-1]+'_'+passwd+'_'+filename_postfix+'.'+file_type.split('/')[-1], 'wb') as f:
         res = sess.get(file_path, verify=False, stream=True)
         for chunk in res:
             f.write(chunk)
@@ -44,11 +44,11 @@ def get_risu_dl_link(folder: str, url: str, passwd: str) ->str:
             app = soup.select('#app')
             if app:
                 params = json.loads(next(app[0].children)[':params'])
-                print(params)
                 if params['lock'] == False: # if no password needed
-                    for file_info in params['file_infos']:
+                    for index, file_info in enumerate(params['file_infos']):
                     # file_info = params['file_infos']
-                        passwd, file_type = dl(sess, folder, url, 'NOPASSWD', file_info)
+                        # Hardcore way to prevent filename repeat in multiple file situation
+                        passwd, file_type = dl(sess, folder, url, 'NOPASSWD', str(index), file_info)
                     return 'NOPASSWD', file_type
 
             result = soup.select('meta[name=csrf-token]')
@@ -60,9 +60,9 @@ def get_risu_dl_link(folder: str, url: str, passwd: str) ->str:
             if res.status_code == 200 and 'is_expired' in res.json():
                 return None, 'is_expired'
             elif res.status_code == 200 and res.json()['lock'] == True:
-                for file_info in res.json()['file_infos']:
+                for index, file_info in enumerate(res.json()['file_infos']):
                 # file_info = res.json()['file_infos'][0]
-                    passwd, file_type = dl(sess, folder, url, passwd, file_info)
+                    passwd, file_type = dl(sess, folder, url, passwd, str(index), file_info)
                 return passwd, file_type
             elif res.status_code == 200 and res.json()['lock'] == False:
                 return None, 'wrong_passwd'
