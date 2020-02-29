@@ -46,7 +46,7 @@ def get_risu_dl_link(folder: str, url: str, passwd: str) ->str:
                 params = json.loads(next(app[0].children)[':params'])
                 print(params)
                 if params['lock'] == False: # if no password needed
-                    for file_info in params['file_infos']
+                    for file_info in params['file_infos']:
                     # file_info = params['file_infos']
                         passwd, file_type = dl(sess, folder, url, 'NOPASSWD', file_info)
                     return 'NOPASSWD', file_type
