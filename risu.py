@@ -44,9 +44,11 @@ def get_risu_dl_link(folder: str, url: str, passwd: str) ->str:
             app = soup.select('#app')
             if app:
                 params = json.loads(next(app[0].children)[':params'])
+                print(params)
                 if params['lock'] == False: # if no password needed
-                    file_info = params['file_infos'][0]
-                    passwd, file_type = dl(sess, folder, url, 'NOPASSWD', file_info)
+                    for file_info in params['file_infos']
+                    # file_info = params['file_infos']
+                        passwd, file_type = dl(sess, folder, url, 'NOPASSWD', file_info)
                     return 'NOPASSWD', file_type
 
             result = soup.select('meta[name=csrf-token]')
@@ -58,8 +60,9 @@ def get_risu_dl_link(folder: str, url: str, passwd: str) ->str:
             if res.status_code == 200 and 'is_expired' in res.json():
                 return None, 'is_expired'
             elif res.status_code == 200 and res.json()['lock'] == True:
-                file_info = res.json()['file_infos'][0]
-                passwd, file_type = dl(sess, folder, url, passwd, file_info)
+                for file_info in res.json()['file_infos']:
+                # file_info = res.json()['file_infos'][0]
+                    passwd, file_type = dl(sess, folder, url, passwd, file_info)
                 return passwd, file_type
             elif res.status_code == 200 and res.json()['lock'] == False:
                 return None, 'wrong_passwd'
