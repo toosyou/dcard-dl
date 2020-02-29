@@ -105,6 +105,9 @@ class Dcard:
         
         # Regular comments
         for count in range(0, self.article_json["commentCount"], 100):
+            # Be kind to Dcard API
+            time.sleep(random.random() + 1)
+
             res = requests.get(
                 Dcard.API_ROOT + '/posts/' + self.article_id + '/comments?limit=100&after='+str(count),
                 proxies = self.proxy
@@ -206,9 +209,15 @@ class Worker(threading.Thread):
                 # Be kind to dcard'api
                 # Sleep after get id from queue, in case of 
                 # calling `.get()` to an empty queue
-                time.sleep(random.random())
+                time.sleep(random.random() + 1)
                 # Create Dcard object
-                dcard = Dcard(article_id, self.proxy)
+                try:
+                    dcard = Dcard(article_id, self.proxy)
+                except Exception as e:
+                    print("Proxy Connection Error.")
+                    self.queue.put(article_id)
+                    continue
+                
                 if dcard.exist == False:
                     continue
 
