@@ -8,23 +8,41 @@ It will automaticlly detect the password of those encrypted img/mov which have b
 We've reached about 70% accuracy simpliy use rule based password detection.
 This project is still in development stage.
 
-**WARNING: ppt.cc is disable now due to its unstable server**
+<!-- **WARNING: ppt.cc is disable now due to its unstable server** -->
 
 ## Requirement
+
+You will need Python 3.x to run this script.
+Packages' version are not specified, these are just what I'm using.
 ```
-requests
-bs4
+requests = "==2.18.4"
+beautifulsoup4 = "==4.8.2"
+pysocks = "==1.7.1"
+```
+
+## Quick start
+
+If you're using `pipenv`, just follow these steps.
+```bash
+git clone https://github.com/jasperlin1996/dcard-dl.git
+cd dcard-dl
+pipenv install
+pipenv run python dcard.py
 ```
 
 ## Usage
 
+`browse.py` has been deprecated due to code quality and Dcard website's update.
+Now, use `dcard.py` instead.
+
 For basic functions, follow the script below.
 ```python
-python3 browse.py
+python3 dcard.py
 ```
+
 For more details: 
 ```
-usage: browse.py [-h] [-c | -r RANGE] [-f FOLDER] [-t THREAD]
+usage: dcard.py [-h] [-c | -r RANGE] [-f FOLDER] [-t THREAD]
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -38,8 +56,13 @@ optional arguments:
                         default = 4
 ```
 
+Example:
+```bash
+python3 dcard.py -c -t 4 -f data/
+```
+
 We search from:
-* Original Dcard site -- Daily hot posts
+* ~~Original Dcard site -- Daily hot posts~~
 * Dcard API -- Same as above, but more flexibility
 * Deepcard API -- History hot posts
 

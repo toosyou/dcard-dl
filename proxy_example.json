@@ -1,0 +1,9 @@
+[
+    {
+        "proxy_name": "MyProxy",
+        "proxy": {
+            "https": "socks5://user:password@host:port", 
+            "http": "socks5://user:password@host:port"
+        }
+    }
+]
