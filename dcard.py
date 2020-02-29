@@ -1,4 +1,5 @@
 import re
+import json
 import requests
 
 import os
@@ -11,23 +12,33 @@ import argparse
 import pathlib
 
 import risu
+import pptcc
 import deepcard
 import progress_bar
 
-def get_pop(forums='sex'):
+def get_pop(proxy, forums='sex'):
     """
     Description:
         Get pop posts' id.
     Args:
-        forums(str): Target forums
+        forums(str): Target forums.
     Return:
         article_links(list[str]): Pop posts' id.
     """ 
     return list(map(lambda a: str(a['id']), requests.get(
-        Dcard.API_ROOT + '/forums/' + forums + '/posts?popular=true&limit=30'
+        Dcard.API_ROOT + '/forums/' + forums + '/posts?popular=true&limit=30',
+        proxies = proxy
     ).json()))
 
 def create_folder(folder):
+    """
+    Description:
+        Create folder in case you don't have it -3-.
+    Args:
+        folder(str): Folder path.
+    Return:
+        Nope :D
+    """
     pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
 
 class Dcard:
@@ -38,7 +49,7 @@ class Dcard:
     """
     API_ROOT = 'https://www.dcard.tw/_api'
 
-    def __init__(self, article_id, mode='pop'):
+    def __init__(self, article_id, proxy, mode='pop'):
         """
         Description:
             Create this object while getting popular posts' id.
@@ -46,7 +57,12 @@ class Dcard:
             mode(str): Using dcard API or deepcard api? Maybe should use enum type.
         """
         self.article_id = article_id
-        res = requests.get(Dcard.API_ROOT + '/posts/' + article_id)
+        self.proxy = proxy
+
+        res = requests.get(
+            Dcard.API_ROOT + '/posts/' + article_id,
+            proxies = self.proxy
+        )
 
         self.exist = False
         if res.status_code == 200:
@@ -78,15 +94,21 @@ class Dcard:
         comments = set()
 
         # Popular comments
-        res = requests.get(Dcard.API_ROOT + '/posts/' + self.article_id + '/comments?popular=true')
+        res = requests.get(
+            Dcard.API_ROOT + '/posts/' + self.article_id + '/comments?popular=true',
+            proxies = self.proxy
+        )
         # Post by host and available
         for res_json in res.json():
             if res_json['host'] == True and res_json['hidden'] == False:
                 comments = comments.union(set(res_json['content'].split()))
         
         # Regular comments
-        for count in range(0, self.article_json["commentCount"], 30):
-            res = requests.get(Dcard.API_ROOT + '/posts/' + self.article_id + '/comments?after='+str(count))
+        for count in range(0, self.article_json["commentCount"], 100):
+            res = requests.get(
+                Dcard.API_ROOT + '/posts/' + self.article_id + '/comments?limit=100&after='+str(count),
+                proxies = self.proxy
+            )
             for res_json in res.json():
                 if res_json['host'] == True and res_json['hidden'] == False:
                     comments = comments.union(set(res_json['content'].split()))
@@ -154,15 +176,16 @@ class Worker(threading.Thread):
 
     pb = progress_bar.Progress_Bar()
 
-    def __init__(self, folder, queue, lock):
+    def __init__(self, folder, queue, proxy, lock):
         threading.Thread.__init__(self)
         self.queue = queue
         self.lock = lock
         self.total = self.queue.qsize()
-        self.total_links = 1 # prevent divide by zero error
+        self.total_links = 0
         self.success_links = 0
         self.is_expired = 0
         self.folder = folder
+        self.proxy = proxy
 
     def run(self):
         # Get services status
@@ -170,6 +193,7 @@ class Worker(threading.Thread):
             'ppt.cc': False,
             'risu.io': False,
         }
+        requests.urllib3.disable_warnings() # for risu.io
         if requests.get('https://ppt.cc/').status_code == 200:
             service_status['ppt.cc'] = True
         if requests.get('https://risu.io/', verify=False).status_code == 200:
@@ -177,18 +201,21 @@ class Worker(threading.Thread):
         
         while self.queue.qsize() > 0:
             with open(self.folder + 'this_dl.log', 'a') as log:
-                # Be kind to dcard'api
-                time.sleep(random.random())
                 # Accept job from queue
                 article_id = self.queue.get()
+                # Be kind to dcard'api
+                # Sleep after get id from queue, in case of 
+                # calling `.get()` to an empty queue
+                time.sleep(random.random())
                 # Create Dcard object
-                dcard = Dcard(article_id)
+                dcard = Dcard(article_id, self.proxy)
                 if dcard.exist == False:
                     continue
 
                 priority_passwd = set()
-                self.total_links = len(dcard.short_links['ppt.cc'])*service_status['ppt.cc'] + \
-                                   len(dcard.short_links['risu.io'])*service_status['risu.io']
+                self.total_links += len(dcard.short_links['risu.io'])*service_status['risu.io'] + \
+                                    len(dcard.short_links['ppt.cc'])*service_status['ppt.cc']
+                                   
                 for service, short_url in dcard.short_links.items():
                     for url in short_url:
                         ret, content_type = None, None
@@ -197,17 +224,17 @@ class Worker(threading.Thread):
                                 ret, content_type = risu.risuio_dl(
                                     self.folder, url, priority_passwd, dcard.passwd 
                                 )
-                            # if service == 'ppt.cc':
-                            #     ret, content_type = pptcc_dl(
-                            #         short_url, priority_passwd, passwd_set
-                            #     )  # dl
+                            if service == 'ppt.cc':
+                                ret, content_type = pptcc.pptcc_dl(
+                                    self.folder, url, priority_passwd, dcard.passwd
+                                )  # dl
                         except Exception as e:
                             self.lock.acquire()
                             print(e)
                             log.write(
-                                u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{url} {short_url}\n")
+                                u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{dcard.article_id} {url}\n")
                             Worker.pb.bar_with_info(u"[Unknown][\u001b[31mFailed\u001b[0m] " +
-                                                f"{short_url}")
+                                                f"{url}")
                             self.lock.release()
                             raise e
 
@@ -216,9 +243,9 @@ class Worker(threading.Thread):
                             self.success_links += 1
                             self.lock.acquire()
                             log.write(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m]" +
-                                        f"{url} {short_url} {ret}\n")
+                                        f"{dcard.article_id} {url} {ret}\n")
                             Worker.pb.bar_with_info(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m] " +
-                                                f"{short_url} {ret}")
+                                                f"{url} {ret}")
                             # optimize
                             priority_passwd.add(ret)
                             self.lock.release()
@@ -231,14 +258,19 @@ class Worker(threading.Thread):
                             log.write(
                                 f"[{content_type if content_type else 'Unknown'}]" + 
                                 u"[\u001b[31mFailed\u001b[0m] " + 
-                                f"{url} {short_url}\n"
+                                f"{dcard.article_id} {url}\n"
                             )
                             Worker.pb.bar_with_info(
                                 f"[{content_type if content_type else 'Unknown'}]" +
                                 u"[\u001b[31mFailed\u001b[0m] " +
-                                f"{short_url}"
+                                f"{url}"
                             )
                             self.lock.release()
+
+                self.lock.acquire()
+                Worker.pb.bar((self.total - self.queue.qsize())/self.total)
+                self.lock.release()
+        print("A worker has got off work.")
 
 
 if __name__ == "__main__":
@@ -266,11 +298,22 @@ if __name__ == "__main__":
         start_time = datetime.date(*time_range[:3])
         end_time   = datetime.date(*time_range[3:])
         args.current = False
+
     worker_num = args.thread
+    # Use proxy
+    try:
+        with open('proxy.json', 'r') as j:
+            proxy = json.loads(j.read())
+            if len(proxy) > 0:
+                select = random.randint(1, len(proxy)) - 1
+                select_proxy = proxy[select]['proxy']
+
+    except FileNotFoundError as e:
+        print('Proxy configure file not found.')
 
     # Main steps
     if args.current == True:
-        article_links = get_pop()
+        article_links = get_pop(select_proxy)
     if args.range:
         article_links = deepcard.get_articles(start_time, end_time)
     
@@ -284,7 +327,7 @@ if __name__ == "__main__":
         for link in article_links:
             mission_queue.put(link)
         for i in range(worker_num):
-            workers.append(Worker(folder, mission_queue, lock))
+            workers.append(Worker(folder, mission_queue, select_proxy, lock))
         for worker in workers:
             worker.start()
         for worker in workers:
