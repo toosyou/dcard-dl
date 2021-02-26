@@ -2,16 +2,22 @@ import os
 import json
 import requests
 from bs4 import BeautifulSoup as bs
+from urllib.request import urlretrieve
 
 
 def dl(sess, folder, url, passwd, filename_postfix, file_info):
     file_path = file_info['file_path']
     file_type = file_info['content_type']
-    
-    with open(folder+url.split('/')[-1]+'_'+passwd+'_'+filename_postfix+'.'+file_type.split('/')[-1], 'wb') as f:
-        res = sess.get(file_path, verify=False, stream=True)
-        for chunk in res:
-            f.write(chunk)
+
+    output_filename = folder+url.split('/')[-1]+'_'+passwd+'_'+filename_postfix+'.'+file_type.split('/')[-1]
+
+    if file_path.startswith('data'):
+        urlretrieve(file_path, output_filename)
+    else:
+        with open(output_filename, 'wb') as f:
+            res = sess.get(file_path, verify=False, stream=True)
+            for chunk in res:
+                f.write(chunk)
     # print(file_path, file_type)
 
     return passwd, file_type
@@ -87,7 +93,7 @@ def risuio_dl(folder, url, priority_passwd, passwd_set):
             elif content_type == 'connection_error':
                 return None, content_type
             else:
-                print(content_type)
+                # print(content_type)
                 return None, content_type
         except Exception as e:
             raise e

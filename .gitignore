@@ -1,3 +1,6 @@
 .DS_Store
-test_links.txt
-proxy.json
+data
+.vscode
+*.ipynb
+*.pyc
+*.json

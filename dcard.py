@@ -17,6 +17,10 @@ import pptcc
 import deepcard
 import progress_bar
 
+from tinydb import TinyDB, Query
+
+db = TinyDB('./data/db.json')
+
 def get_pop(proxy, forums='sex'):
     """
     Description:
@@ -42,13 +46,22 @@ def create_folder(folder):
     """
     pathlib.Path(folder).mkdir(parents=True, exist_ok=True)
 
+def get_proxy_pool(proxy_filename):
+
+    with open(proxy_filename, 'r') as f:
+        proxies = json.loads(f.read())
+
+    random.shuffle(proxies)
+    return [px['proxy'] for px in proxies]
+
 class Dcard:
     """
     Description:
         This object is for dcard API only, but with some extendability.
         One object for one dcard link(site).
     """
-    API_ROOT = 'https://www.dcard.tw/_api'
+    # API_ROOT = 'https://www.dcard.tw/_api'
+    API_ROOT = 'https://www.dcard.tw/service/api/v2'
 
     def __init__(self, article_id, proxy, mode='pop'):
         """
@@ -80,6 +93,7 @@ class Dcard:
             self.short_links = {
                 'risu.io': self.get_short_links(re.compile('.*risu\.io/[a-zA-Z]+')),
                 'ppt.cc':  self.get_short_links(re.compile('.*ppt\.cc.*')),
+                'imgur.com': self.get_short_links(re.compile(r'https?:\/\/(?:\w+\.)?imgur\.(?:com|dcard\.tw)\/(?:\S*)(?:\.[a-zA-Z]{3})'))
             }
             self.passwd = self.get_password()
 
@@ -190,7 +204,7 @@ class Dcard:
                 passwd_set.add(candidate_passwd)
         
         year, month, day = self.article_json['createdAt'].split('T')[0].split('-')
-        for date_shift in range(6): # Maybe try createdAt -> updatedAt
+        for date_shift in range(7): # Maybe try createdAt -> updatedAt
             date = (datetime.date(int(year), int(month), int(day))+datetime.timedelta(days=date_shift)).strftime('%m%d')
             passwd_set.add(date)
         
@@ -203,13 +217,12 @@ class Dcard:
             pass
 
         return passwd_set
-    
 
 class Worker(threading.Thread):
 
     pb = progress_bar.Progress_Bar()
 
-    def __init__(self, folder, queue, proxy, lock):
+    def __init__(self, folder, queue, proxy_queue, working_proxy_queue, lock):
         threading.Thread.__init__(self)
         self.queue = queue
         self.lock = lock
@@ -218,7 +231,8 @@ class Worker(threading.Thread):
         self.success_links = 0
         self.is_expired = 0
         self.folder = folder
-        self.proxy = proxy
+        self.proxy_queue = proxy_queue
+        self.working_proxy_queue = working_proxy_queue
 
     def run(self):
         # Get services status
@@ -236,6 +250,14 @@ class Worker(threading.Thread):
             with open(self.folder + 'this_dl.log', 'a') as log:
                 # Accept job from queue
                 article_id = self.queue.get()
+                if self.proxy_queue.qsize() == 0 and self.working_proxy_queue.qsize() == 0:
+                    print('No available proxies.')
+                    break
+
+                self.proxy = self.proxy_queue.get()
+                self.working_proxy_queue.put(self.proxy)
+                print('get proxy:', self.proxy)
+
                 # Be kind to dcard'api
                 # Sleep after get id from queue, in case of 
                 # calling `.get()` to an empty queue
@@ -243,9 +265,13 @@ class Worker(threading.Thread):
                 # Create Dcard object
                 try:
                     dcard = Dcard(article_id, self.proxy)
+                    self.proxy_queue.put(self.proxy) # put it back
+                    self.working_proxy_queue.get() # drop it
                 except Exception as e:
+                    print(e)
                     print("Proxy Connection Error.")
                     self.queue.put(article_id)
+                    self.working_proxy_queue.get() # drop it
                     continue
                 
                 if dcard.exist == False:
@@ -268,21 +294,44 @@ class Worker(threading.Thread):
                 #         try:
                 #             ret, content_type = future.result()
                 # ##
+                post_basedir = os.path.join(self.folder, dcard.article_json['title'])
+                create_folder(post_basedir)
+
+                with open(os.path.join(post_basedir, 'article.json'), 'w') as f:
+                    json.dump(dcard.article_json, f)
+
                 for service, short_url in dcard.short_links.items():
                     for url in short_url:
                         ret, content_type = None, None
                         try:
                             if service == 'risu.io':
                                 ret, content_type = risu.risuio_dl(
-                                    self.folder, url, priority_passwd, dcard.passwd 
+                                    post_basedir + '/', url, priority_passwd, dcard.passwd 
                                 )
                             if service == 'ppt.cc':
                                 ret, content_type = pptcc.pptcc_dl(
-                                    self.folder, url, priority_passwd, dcard.passwd
+                                    post_basedir + '/', url, priority_passwd, dcard.passwd
                                 )  # dl
+                            if service == 'imgur.com':
+                                media_entity = Query()
+
+                                filename = os.path.join(post_basedir, url.split('/')[-1])
+
+                                if len(db.search(media_entity.filename == os.path.basename(filename))) == 0:
+                                    with requests.Session() as sess:
+                                        with open(filename, 'wb') as f:
+                                            r = sess.get(url, verify=False, stream=True, proxies=self.proxy)
+                                            for chunk in r:
+                                                f.write(chunk)
+                                    ret = 'success'
+                                    time.sleep(0.2)
+                                else:
+                                    ret = 'parsed'
+
                         except Exception as e:
                             self.lock.acquire()
                             print(e)
+                            print('failed')
                             log.write(
                                 u"[Unknown][\u001b[31mFailed\u001b[0m] " + f"{dcard.article_id} {url}\n")
                             Worker.pb.bar_with_info(u"[Unknown][\u001b[31mFailed\u001b[0m] " +
@@ -292,6 +341,7 @@ class Worker(threading.Thread):
 
                         if ret:
                             # logging
+                            self.total_links += 1
                             self.success_links += 1
                             self.lock.acquire()
                             log.write(f"[{content_type}]" + u"[\u001b[32mSuccess\u001b[0m]" +
@@ -320,7 +370,7 @@ class Worker(threading.Thread):
                             self.lock.release()
 
                 self.lock.acquire()
-                Worker.pb.bar((self.total - self.queue.qsize())/self.total)
+                Worker.pb.bar((self.total - self.queue.qsize() - self.working_proxy_queue.qsize())/self.total)
                 self.lock.release()
         print("A worker has got off work.")
 
@@ -356,34 +406,40 @@ if __name__ == "__main__":
         args.current = False
 
     worker_num = args.thread
-    # Use proxy
-    try:
-        with open(proxy_path, 'r') as j:
-            proxy = json.loads(j.read())
-            if len(proxy) > 0:
-                select = random.randint(1, len(proxy)) - 1
-                select_proxy = proxy[select]['proxy']
-
-    except FileNotFoundError as e:
-        print('Proxy configure file not found.')
+    proxy_queue = queue.Queue()
+    for proxy in get_proxy_pool(args.proxy): proxy_queue.put(proxy)
 
     # Main steps
     if args.current == True:
-        article_links = get_pop(select_proxy)
+        print('Getting article list...')
+        while True:
+            try:
+                proxy = proxy_queue.get()
+                print('get proxy:', proxy)
+                article_links = get_pop(proxy)
+                proxy_queue.put(proxy) # put it back
+                break
+            except Exception as e:
+                print(e)
+                continue
+
     if args.range:
         article_links = deepcard.get_articles(start_time, end_time)
     
+    print('Articles acquired!')
+
     total_links = 0
     success_links = 0
     expired_links = 0
     mission_queue = queue.Queue()
+    working_proxy_queue = queue.Queue()
     workers = []
 
-    with open(folder + 'this_dl.log', 'w') as log:
-        for link in article_links:
-            mission_queue.put(link)
+    with open(folder + 'this_dl.log', 'w+') as log:
+        for link in article_links: mission_queue.put(link)
+
         for i in range(worker_num):
-            workers.append(Worker(folder, mission_queue, select_proxy, lock))
+            workers.append(Worker(folder, mission_queue, proxy_queue, working_proxy_queue, lock))
         for worker in workers:
             worker.start()
         for worker in workers:

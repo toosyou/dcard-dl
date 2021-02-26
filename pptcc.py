@@ -53,4 +53,5 @@ def pptcc_dl(folder: str, url: str, priority_passwd: set, passwd_set: set):
         return None, None
 
 if __name__ == "__main__":
+    pptcc_dl('data/', 'https://ppt.cc/fb1Kdx', set(), set(['1102']))
     pass

@@ -1,0 +1,21 @@
+[[source]]
+name = "pypi"
+url = "https://pypi.org/simple"
+verify_ssl = true
+
+[dev-packages]
+jupyterlab = "*"
+jupyter = "*"
+
+[packages]
+requests = "*"
+beautifulsoup4 = "*"
+pysocks = "*"
+proxybroker = "*"
+python-telegram-bot = "*"
+tinydb = "*"
+tqdm = "*"
+better-exceptions = "*"
+
+[requires]
+python_version = "3.8"
